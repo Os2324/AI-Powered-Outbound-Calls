@@ -1,0 +1,24 @@
+# Secrets - never commit
+**/.env
+**/private.key
+**/*.key
+
+# Virtual environments
+**/venv/
+
+# Python cache
+**/__pycache__/
+**/*.pyc
+
+# Generated/downloaded data (regenerable from source)
+chatbot/chroma_db/
+voice-assistant/ngrok.exe
+voice-assistant/cloudflared.exe
+voice-assistant/ngrok.zip
+
+# Local databases (generated interaction/log data)
+**/logs.db
+
+# Personal voice recordings / test audio
+voice-assistant/recording.wav
+voice-assistant/reply.mp3

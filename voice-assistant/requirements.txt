@@ -1,0 +1,6 @@
+faster-whisper
+sounddevice
+scipy
+gTTS
+openai
+python-dotenv
