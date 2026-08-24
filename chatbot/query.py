@@ -20,7 +20,10 @@ from openai import OpenAI
 
 load_dotenv()
 
-DB_DIR = "chroma_db"
+DB_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "chroma_db",
+)
 COLLECTION_NAME = "kb_docs"
 EMBEDDING_MODEL = "intfloat/multilingual-e5-small"
 TOP_K = 4
@@ -68,13 +71,32 @@ def retrieve(question, collection, model):
     results = collection.query(
         query_embeddings=query_embedding,
         n_results=TOP_K,
+        include=["documents", "metadatas", "distances"],
     )
 
     chunks = results["documents"][0]
     metadatas = results["metadatas"][0]
+    distances = results["distances"][0]
 
-    return list(zip(chunks, metadatas))
+    return list(
+        zip(
+            chunks,
+            metadatas,
+            distances,
+        )
+    )
+def filter_relevant_results(results, max_distance=0.8):
+    """
+    Remove weakly related chunks based on embedding distance.
 
+    Smaller distance = more relevant.
+    """
+
+    return [
+        result
+        for result in results
+        if result[2] <= max_distance
+    ]
 
 def build_context(chunks_with_meta):
     parts = []

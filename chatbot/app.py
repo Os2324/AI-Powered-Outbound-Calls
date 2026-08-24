@@ -17,7 +17,9 @@ import streamlit as st
 import chromadb
 from sentence_transformers import SentenceTransformer
 from openai import OpenAI
-
+from router import route_question, create_client
+from sql_query import process_sql_question
+TOP_K = 4
 from query import (
     DB_DIR,
     COLLECTION_NAME,
@@ -30,8 +32,21 @@ from query import (
     ask_llm,
 )
 
-from db import init_db, log_interaction, set_feedback
-from voice import transcribe_audio, text_to_speech
+from db import (
+    init_db,
+    log_interaction,
+    set_feedback,
+)
+
+from voice import (
+    transcribe_audio,
+    text_to_speech,
+)
+
+from router import route_question
+from sql_query import process_sql_question
+
+
 
 
 init_db()
@@ -273,8 +288,10 @@ def render_message(idx, msg):
 
         # Sources
         sources = msg.get("sources", [])
+        route = msg.get("route")
 
-        if sources:
+        if sources and route != "sql":
+
             tags = "".join(
                 f'<span class="source-tag">📄 {s}</span>'
                 for s in sources
@@ -289,7 +306,31 @@ def render_message(idx, msg):
                 """,
                 unsafe_allow_html=True,
             )
+                # SQL information
+        route = msg.get("route")
+        sql_query = msg.get("sql_query")
 
+        if route == "sql":
+            st.markdown(
+                """
+                <div class="source-row">
+                    <span class="source-label">
+                        المصدر:
+                    </span>
+                    <span class="source-tag">
+                        🗄️ قاعدة البيانات
+                    </span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            if sql_query:
+                with st.expander("🔍 عرض استعلام SQL"):
+                    st.code(
+                        sql_query,
+                        language="sql",
+                    )
         # Audio response
         audio_path = msg.get("audio_path")
 
@@ -335,55 +376,165 @@ for i, msg in enumerate(st.session_state.messages):
 # ---------------------------------------------------------------------------
 # RAG processing helper
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# RAG result filtering
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# RAG retrieval
+# ---------------------------------------------------------------------------
 
+def retrieve(question, collection, model):
+    query_embedding = model.encode(
+        [f"query: {question}"]
+    ).tolist()
+
+    results = collection.query(
+        query_embeddings=query_embedding,
+        n_results=TOP_K,
+    )
+
+    chunks = results["documents"][0]
+    metadatas = results["metadatas"][0]
+
+    return list(zip(chunks, metadatas))
+
+
+# ---------------------------------------------------------------------------
+# RAG result filtering
+# ---------------------------------------------------------------------------
+def filter_relevant_results(results):
+    """
+    Remove weak/irrelevant RAG results.
+
+    Chroma returns results ordered by similarity, so for now
+    we keep the retrieved results while removing empty chunks.
+    """
+
+    filtered = []
+
+    for chunk, meta in results:
+        if not chunk:
+            continue
+
+        chunk = chunk.strip()
+
+        if not chunk:
+            continue
+
+        filtered.append(
+            (
+                chunk,
+                meta,
+            )
+        )
+
+    return filtered
 def process_question(question, generate_audio=False):
     """
-    Run the complete RAG pipeline.
+    Run the complete hybrid RAG + SQL pipeline.
 
     question
         ↓
-    retrieve
+    router
+      ├── SQL → Text-to-SQL → SQLite
+      │
+      └── RAG → ChromaDB → LLM
         ↓
-    build_context
-        ↓
-    ask_llm + selected persona
+    answer
         ↓
     optional TTS
     """
 
     start_time = time.time()
+    route_start = time.time()
 
-    results = retrieve(
+    # ---------------------------------------------------------
+    # Decide whether this is SQL or RAG
+    # ---------------------------------------------------------
+
+    route = route_question(
         question,
-        collection,
-        embed_model,
-    )
-
-    context = build_context(results)
-
-    answer = ask_llm(
-        question,
-        context,
         llm_client,
-        persona=selected_persona,
     )
+    route_time = time.time() - route_start
+    print(f"[DEBUG] Router: {route_time:.2f}s")
+    sql_query = None
+    sources = []
+
+    # ---------------------------------------------------------
+    # SQL route
+    # ---------------------------------------------------------
+
+    if route == "sql":
+        sql_start = time.time()
+
+        sql_query, _, _, answer = process_sql_question(
+            question,
+            llm_client,
+        )
+
+        sql_time = time.time() - sql_start
+        print(f"[DEBUG] SQL pipeline: {sql_time:.2f}s")
+
+        sources = ["قاعدة البيانات"]
+
+    # ---------------------------------------------------------
+    # RAG route
+    # ---------------------------------------------------------
+
+    else:
+        rag_start = time.time()
+
+        results = retrieve(
+            question,
+            collection,
+            embed_model,
+        )
+
+        results = filter_relevant_results(
+            results
+        )
+
+        context = build_context(results)
+
+        answer = ask_llm(
+            question,
+            context,
+            llm_client,
+            persona=selected_persona,
+        )
+
+        rag_time = time.time() - rag_start
+        print(f"[DEBUG] RAG pipeline: {rag_time:.2f}s")
+
+        sources = sorted(
+            {
+                meta["source"]
+                for _, meta in results
+            }
+        )
+
+    # ---------------------------------------------------------
+    # Latency
+    # ---------------------------------------------------------
 
     latency = time.time() - start_time
 
-    sources = sorted(
-        {
-            meta["source"]
-            for _, meta in results
-        }
-    )
+    # ---------------------------------------------------------
+    # Optional voice response
+    # ---------------------------------------------------------
 
     audio_path = None
 
     if generate_audio:
+
         audio_dir = Path("generated_audio")
         audio_dir.mkdir(exist_ok=True)
 
-        audio_path = audio_dir / f"response_{int(time.time() * 1000)}.mp3"
+        audio_path = (
+            audio_dir
+            / f"response_{int(time.time() * 1000)}.mp3"
+        )
 
         text_to_speech(
             answer,
@@ -391,6 +542,10 @@ def process_question(question, generate_audio=False):
         )
 
         audio_path = str(audio_path)
+
+    # ---------------------------------------------------------
+    # Logging
+    # ---------------------------------------------------------
 
     row_id = log_interaction(
         agent_name or "غير معروف",
@@ -400,7 +555,14 @@ def process_question(question, generate_audio=False):
         latency,
     )
 
-    return answer, sources, row_id, audio_path
+    return (
+        answer,
+        sources,
+        row_id,
+        audio_path,
+        route,
+        sql_query,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +621,7 @@ if audio_value is not None:
                 "🤖 جاري البحث في المستندات وإنشاء الإجابة..."
             ):
 
-                answer, sources, row_id, audio_path = process_question(
+                answer, sources, row_id, audio_path, route, sql_query = process_question(
                     voice_question,
                     generate_audio=True,
                 )
@@ -472,6 +634,8 @@ if audio_value is not None:
                     "row_id": row_id,
                     "feedback": None,
                     "audio_path": audio_path,
+                    "route": route,
+                    "sql_query": sql_query,
                 }
             )
 
@@ -497,7 +661,7 @@ if question:
 
     with st.spinner("جاري البحث في المستندات..."):
 
-        answer, sources, row_id, audio_path = process_question(
+        answer, sources, row_id, audio_path, route, sql_query = process_question(
             question,
             generate_audio=False,
         )
@@ -510,6 +674,8 @@ if question:
             "row_id": row_id,
             "feedback": None,
             "audio_path": audio_path,
+            "route": route,
+            "sql_query": sql_query,
         }
     )
 
