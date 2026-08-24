@@ -5,3 +5,5 @@ python-dotenv
 pypdf
 python-docx
 streamlit
+faster-whisper
+gTTS
