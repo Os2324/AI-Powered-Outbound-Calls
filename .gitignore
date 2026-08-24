@@ -23,3 +23,8 @@ voice-assistant/ngrok.zip
 # Personal voice recordings / test audio
 voice-assistant/recording.wav
 voice-assistant/reply.mp3
+
+# Root virtual environment
+.venv/
+
+chroma_db/
