@@ -28,10 +28,13 @@ from sentence_transformers import SentenceTransformer
 
 # Reuse the chatbot project's RAG pipeline directly instead of duplicating it.
 CHATBOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "chatbot"))
-sys.path.insert(0, CHATBOT_DIR)
+sys.path.append(CHATBOT_DIR)  # append (not insert at 0) so local voice-assistant files, like our own db.py, take priority
 from query import retrieve, build_context, ask_llm, EMBEDDING_MODEL, COLLECTION_NAME  # noqa: E402
 
+from db import init_db, log_call_outcome, log_call_duration
+
 load_dotenv()
+init_db()
 
 LLM_API_KEY = os.getenv("LLM_API_KEY")
 LLM_MODEL = os.getenv("LLM_MODEL", "gemini-flash-lite-latest")
@@ -40,10 +43,14 @@ CHROMA_DB_DIR = os.path.join(CHATBOT_DIR, "chroma_db")
 
 CLASSIFY_PROMPT = """أنت تصنف رد عميل في مكالمة متابعة هاتفية. المكالمة تسأل العميل هل أتم خطوات
 معينة تمت مناقشتها في مكالمة سابقة. صنّف رد العميل إلى واحد فقط من هذه التصنيفات:
-- yes: العميل يؤكد أنه أتم الخطوات
-- no: العميل يقول إنه لم يتمها
-- unsure: العميل غير متأكد
-- question: العميل يسأل سؤالاً مختلفاً تمامًا وليس إجابة عن السؤال
+
+- yes: العميل يؤكد أنه أتم الخطوات وانحلت المشكلة (مثال: "أيوه خلصت"، "تمام اتحلت")
+- no: العميل يقول إنه لم يتمها، أو لسه محتاج مساعدة، أو المشكلة لسه موجودة
+  (مثال: "لأ لسه"، "لسه محتاج مساعدة"، "المشكلة لسه موجودة")
+- unsure: العميل غير متأكد إذا كان أتم الخطوات صح أو لا (مثال: "مش متأكد")
+- question: العميل يسأل سؤالاً جديدًا تمامًا غير متعلق بإتمام الخطوات
+  (مثال: "إمتى الطلب هيوصل؟"، "عايز أغير كلمة السر")
+
 رد بكلمة واحدة فقط من: yes, no, unsure, question"""
 
 print("Loading embedding model and knowledge base...")
@@ -106,6 +113,15 @@ def speech_response():
         reply_text = verification_reply(label)
 
     print(f"Replying: {reply_text!r}")
+
+    log_call_outcome(
+        conversation_uuid=data.get("conversation_uuid"),
+        to_number=data.get("to"),
+        customer_text=customer_text,
+        classification=label,
+        reply_text=reply_text,
+    )
+
     ncco = [{"action": "talk", "text": reply_text, "language": "ar"}]
     return jsonify(ncco)
 
@@ -113,7 +129,11 @@ def speech_response():
 @app.route("/event", methods=["POST"])
 def event():
     data = request.get_json(force=True, silent=True) or {}
-    print("Call event:", data.get("status"))
+    print("Call event:", data)
+
+    if data.get("status") == "completed" and data.get("duration"):
+        log_call_duration(data.get("conversation_uuid"), int(data["duration"]))
+
     return "", 200
 
 

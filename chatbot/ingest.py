@@ -14,8 +14,9 @@ from sentence_transformers import SentenceTransformer
 from pypdf import PdfReader
 from docx import Document as DocxDocument
 
-DATA_DIR = "data"
-DB_DIR = "chroma_db"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(_HERE, "data")
+DB_DIR = os.path.join(_HERE, "chroma_db")
 COLLECTION_NAME = "kb_docs"
 EMBEDDING_MODEL = "intfloat/multilingual-e5-small"  # free, local, multilingual (Arabic included)
 CHUNK_SIZE = 800   # characters per chunk
@@ -98,17 +99,31 @@ def recursive_chunk(text, chunk_size=CHUNK_SIZE, overlap=CHUNK_OVERLAP, separato
     return [c.strip() for c in chunks if c.strip()]
 
 
-def main():
+def run_ingestion(model=None, progress_callback=None):
+    """
+    Rebuilds the vector database from every document in DATA_DIR.
+    Reuses a pre-loaded embedding model if given (e.g. from a Streamlit page
+    that already has one in memory), otherwise loads its own.
+    progress_callback(message) is called with a status string for each step,
+    if provided -- lets a UI show live progress instead of only terminal prints.
+    Returns {"file_count": int, "chunk_count": int, "files": [(filename, n_chunks), ...]}.
+    """
+    def report(msg):
+        print(msg)
+        if progress_callback:
+            progress_callback(msg)
+
     files = [
         p for p in glob.glob(os.path.join(DATA_DIR, "*"))
         if os.path.splitext(p)[1].lower() in (".txt", ".pdf", ".docx")
     ]
     if not files:
-        print(f"No documents found in {DATA_DIR}/. Add .txt, .pdf, or .docx files there.")
-        return
+        report(f"No documents found in {DATA_DIR}/. Add .txt, .pdf, or .docx files there.")
+        return {"file_count": 0, "chunk_count": 0, "files": []}
 
-    print(f"Found {len(files)} document(s). Loading embedding model ({EMBEDDING_MODEL})...")
-    model = SentenceTransformer(EMBEDDING_MODEL)
+    if model is None:
+        report(f"Loading embedding model ({EMBEDDING_MODEL})...")
+        model = SentenceTransformer(EMBEDDING_MODEL)
 
     client = chromadb.PersistentClient(path=DB_DIR)
     # Start fresh each run so re-ingesting doesn't duplicate old chunks.
@@ -121,18 +136,20 @@ def main():
     all_chunks = []
     all_ids = []
     all_metadatas = []
+    file_summary = []
 
     for path in files:
         filename = os.path.basename(path)
         text = load_document(path)
         chunks = recursive_chunk(text)
-        print(f"  {filename}: {len(chunks)} chunk(s)")
+        report(f"  {filename}: {len(chunks)} chunk(s)")
+        file_summary.append((filename, len(chunks)))
         for i, chunk in enumerate(chunks):
             all_chunks.append(chunk)
             all_ids.append(f"{filename}::{i}")
             all_metadatas.append({"source": filename, "chunk_index": i})
 
-    print(f"Embedding {len(all_chunks)} chunk(s)...")
+    report(f"Embedding {len(all_chunks)} chunk(s)...")
     # e5 models expect a "passage: " prefix on the text being stored.
     embeddings = model.encode(
         [f"passage: {c}" for c in all_chunks],
@@ -146,7 +163,12 @@ def main():
         metadatas=all_metadatas,
     )
 
-    print(f"Done. Stored {len(all_chunks)} chunks in {DB_DIR}/ (collection '{COLLECTION_NAME}').")
+    report(f"Done. Stored {len(all_chunks)} chunks in {DB_DIR}/ (collection '{COLLECTION_NAME}').")
+    return {"file_count": len(files), "chunk_count": len(all_chunks), "files": file_summary}
+
+
+def main():
+    run_ingestion()
 
 
 if __name__ == "__main__":

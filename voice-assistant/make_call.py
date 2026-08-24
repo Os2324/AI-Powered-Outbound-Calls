@@ -1,9 +1,12 @@
 """
 Places a real outbound phone call via Vonage's Voice API, using Vonage's own
-built-in text-to-speech to speak an Arabic greeting into the call.
+built-in text-to-speech to speak an Arabic greeting into the call, then
+listens for the customer's spoken response (handled by server.py).
 
-Usage:
-    python make_call.py
+Usage (CLI):
+    python make_call.py [to_number]
+
+Also importable: place_call(to_number) is reused by app.py's UI.
 """
 
 import os
@@ -12,27 +15,25 @@ from dotenv import load_dotenv
 from vonage import Auth, Vonage
 from vonage_voice import CreateCallRequest, Phone, ToPhone
 
+from crm import build_greeting
+
 load_dotenv()
 
 APPLICATION_ID = os.environ["VONAGE_APPLICATION_ID"]
 PRIVATE_KEY_PATH = os.environ["VONAGE_PRIVATE_KEY_PATH"]
 
 FROM_NUMBER = os.environ["FROM_NUMBER"]
-TO_NUMBER = os.environ["TO_NUMBER"]
+DEFAULT_TO_NUMBER = os.environ["TO_NUMBER"]
 
 # Public URL from the cloudflared tunnel (server.py must be running on port 5000
-# and cloudflared pointed at it). This changes every time the tunnel restarts,
-# so update it here before each test run.
-PUBLIC_URL = "https://hdtv-change-sophisticated-regression.trycloudflare.com"
+# and cloudflared pointed at it). This changes every time the tunnel restarts --
+# update PUBLIC_URL in .env (not here) before each session if it changes.
+PUBLIC_URL = os.environ["PUBLIC_URL"]
 
-GREETING = (
-    "مساء الخير يا افندم، معايا نظام المتابعة الآلي من خدمة العملاء. "
-    "كنا اتكلمنا مع حضرتك في مكالمة سابقة واتفقنا على خطوات معينة لحل المشكلة. "
-    "حابب أتأكد من حضرتك، هل تم تنفيذ الخطوات دي وانحلت المشكلة، ولا لسه محتاج مساعدة؟"
-)
+def place_call(to_number=None):
+    to_number = to_number or DEFAULT_TO_NUMBER
+    greeting = build_greeting(to_number)
 
-
-def main():
     client = Vonage(
         Auth(
             application_id=APPLICATION_ID,
@@ -42,12 +43,13 @@ def main():
 
     response = client.voice.create_call(
         CreateCallRequest(
-            to=[ToPhone(number=TO_NUMBER)],
+            to=[ToPhone(number=to_number)],
             from_=Phone(number=FROM_NUMBER),
+            event_url=[f"{PUBLIC_URL}/event"],
             ncco=[
                 {
                     "action": "talk",
-                    "text": GREETING,
+                    "text": greeting,
                     "language": "ar",
                 },
                 {
@@ -62,6 +64,14 @@ def main():
             ],
         )
     )
+    return response
+
+
+def main():
+    import sys
+
+    to_number = sys.argv[1] if len(sys.argv) > 1 else None
+    response = place_call(to_number)
     print(response)
 
 

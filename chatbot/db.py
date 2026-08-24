@@ -7,10 +7,11 @@ foundation for:
   - Phase 7 (metrics dashboard): a separate page reads and summarizes this table.
 """
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 
-DB_PATH = "logs.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs.db")
 
 
 def init_db():

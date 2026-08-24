@@ -18,6 +18,7 @@ voice-assistant/ngrok.zip
 
 # Local databases (generated interaction/log data)
 **/logs.db
+**/calls.db
 
 # Personal voice recordings / test audio
 voice-assistant/recording.wav

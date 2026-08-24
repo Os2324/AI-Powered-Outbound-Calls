@@ -4,3 +4,10 @@ scipy
 gTTS
 openai
 python-dotenv
+flask
+chromadb
+sentence-transformers
+streamlit
+vonage
+pypdf
+python-docx
