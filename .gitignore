@@ -20,6 +20,7 @@ voice-assistant/ngrok.zip
 **/logs.db
 **/calls.db
 **/auth.db
+chatbot/business.db
 
 # Personal voice recordings / test audio
 voice-assistant/recording.wav
