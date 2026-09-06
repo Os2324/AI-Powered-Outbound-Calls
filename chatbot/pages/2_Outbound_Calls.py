@@ -1,14 +1,29 @@
 """
-Web UI for triggering an outbound AI follow-up call.
-Reuses place_call() from make_call.py -- this file is just the trigger button
-on top of that existing logic. server.py must already be running (handles
-the actual conversation once the call connects).
+Outbound AI follow-up call trigger, ported into the same app/port as the
+chatbot -- reuses place_call() from voice-assistant/make_call.py directly.
+server.py (Flask) + the cloudflared tunnel must already be running
+separately; this page only places the call, it doesn't handle the live
+conversation itself.
+
+Login-gated, and the customer list is scoped to the logged-in user's
+organization -- an agent only ever sees and calls their own company's
+customers, same isolation boundary as the documents.
 """
 
-import streamlit as st
+import os
+import sys
 
-from make_call import place_call
-from crm import lookup_customer, CUSTOMERS
+import streamlit as st
+from dotenv import load_dotenv
+
+from auth_ui import require_login, render_logout_sidebar
+
+VOICE_ASSISTANT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "voice-assistant"))
+load_dotenv(os.path.join(VOICE_ASSISTANT_DIR, ".env"))  # Vonage credentials
+sys.path.append(VOICE_ASSISTANT_DIR)
+
+from make_call import place_call  # noqa: E402
+from crm import lookup_customer, get_customers_by_organization  # noqa: E402
 
 st.set_page_config(page_title="نظام المتابعة الآلي", page_icon="📞", layout="centered")
 
@@ -40,8 +55,6 @@ st.markdown(
     .ticket-card .label { font-size: 0.78rem; color: #9a3412; font-weight: 600; margin-bottom: 4px; }
     .ticket-card .issue { font-size: 1rem; color: #1c1917; }
 
-    div[data-testid="stSelectbox"] label { font-weight: 600; }
-
     div.stButton > button {
         border-radius: 12px;
         font-weight: 700;
@@ -60,6 +73,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+user = require_login(allowed_roles=["admin", "agent"])
+render_logout_sidebar(user)
+
 st.markdown(
     """
     <div class="call-hero">
@@ -70,10 +86,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+org_customers = get_customers_by_organization(user["organization_id"])
+
+if not org_customers:
+    st.info("لا يوجد عملاء مسجلون لهذه المؤسسة بعد.")
+    st.stop()
+
 to_number = st.selectbox(
-    "🗂️ اختر عميلًا (بيانات CRM تجريبية)",
-    options=list(CUSTOMERS.keys()),
-    format_func=lambda n: f"{CUSTOMERS[n]['name']}   ·   {n}   ·   {CUSTOMERS[n]['ticket_id']}",
+    "🗂️ اختر عميلًا",
+    options=list(org_customers.keys()),
+    format_func=lambda n: f"{org_customers[n]['name']}   ·   {n}   ·   {org_customers[n]['ticket_id']}",
 )
 
 customer = lookup_customer(to_number)

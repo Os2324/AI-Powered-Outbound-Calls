@@ -19,12 +19,19 @@ voice-assistant/ngrok.zip
 # Local databases (generated interaction/log data)
 **/logs.db
 **/calls.db
+**/auth.db
 
 # Personal voice recordings / test audio
 voice-assistant/recording.wav
 voice-assistant/reply.mp3
+chatbot/generated_audio/
+voice-assistant/test_input.wav
+voice-assistant/voice_input.wav
 
 # Root virtual environment
 .venv/
 
 chroma_db/
+
+# Local reference notes containing real demo credentials -- not for the public repo
+RUNBOOK.txt

@@ -2,20 +2,33 @@
 Metrics dashboard (Phase 7): reads logs.db and shows usage stats.
 Automatically appears as a separate page in the sidebar because it lives
 inside the pages/ folder — a Streamlit convention, no extra wiring needed.
+
+Login-gated and scoped to the logged-in user's organization: interactions
+are matched back to an organization via the username that asked them
+(logs.db itself only stores the username, not organization_id directly).
 """
 
 import streamlit as st
+
+import auth
+from auth_ui import require_login, render_logout_sidebar
 from db import get_all_interactions
 
 st.set_page_config(page_title="لوحة المتابعة", page_icon="📊", layout="centered")
 st.markdown('<div style="direction: rtl; text-align: right;">', unsafe_allow_html=True)
 
+user = require_login(allowed_roles=["admin", "agent"])
+render_logout_sidebar(user)
+
 st.title("📊 لوحة متابعة المساعد الداخلي")
 
-rows = get_all_interactions()
+username_to_org = {u["username"]: u["organization_id"] for u in auth.get_all_users()}
+
+all_rows = get_all_interactions()
+rows = [r for r in all_rows if username_to_org.get(r["agent_name"]) == user["organization_id"]]
 
 if not rows:
-    st.info("لا توجد بيانات مسجلة بعد. جرب طرح سؤال في الصفحة الرئيسية أولًا.")
+    st.info("لا توجد بيانات مسجلة بعد لهذه المؤسسة. جرب طرح سؤال في صفحة المحادثة أولًا.")
     st.stop()
 
 total = len(rows)
@@ -47,7 +60,7 @@ st.dataframe(
         }
         for r in rows
     ],
-    use_container_width=True,
+    width="stretch",
 )
 
 st.markdown("</div>", unsafe_allow_html=True)

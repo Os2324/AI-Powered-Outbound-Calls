@@ -20,14 +20,21 @@ from crm import build_greeting
 load_dotenv()
 
 APPLICATION_ID = os.environ["VONAGE_APPLICATION_ID"]
-PRIVATE_KEY_PATH = os.environ["VONAGE_PRIVATE_KEY_PATH"]
+# Absolute path, anchored to this file's own folder -- so this still works
+# correctly even when imported from a different project's process (e.g. the
+# chatbot app), where the current working directory isn't voice-assistant/.
+PRIVATE_KEY_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    os.environ["VONAGE_PRIVATE_KEY_PATH"],
+)
 
 FROM_NUMBER = os.environ["FROM_NUMBER"]
 DEFAULT_TO_NUMBER = os.environ["TO_NUMBER"]
 
-# Public URL from the cloudflared tunnel (server.py must be running on port 5000
-# and cloudflared pointed at it). This changes every time the tunnel restarts --
-# update PUBLIC_URL in .env (not here) before each session if it changes.
+# Permanent ngrok static domain (free tier, one per account) -- server.py
+# must be running on port 5000 with ngrok pointed at it:
+#   ngrok.exe http --url=<your-static-domain> 5000
+# Unlike a plain quick tunnel, this URL does not change between restarts.
 PUBLIC_URL = os.environ["PUBLIC_URL"]
 
 def place_call(to_number=None):

@@ -63,7 +63,13 @@ PERSONAS = {
 # RAG retrieval
 # ---------------------------------------------------------------------------
 
-def retrieve(question, collection, model):
+def retrieve(question, collection, model, organization_id):
+    """
+    organization_id is required and enforced as a hard filter -- this is
+    the actual multi-tenant isolation boundary. A chunk belonging to a
+    different organization is never even a candidate for nearest-neighbor
+    search, regardless of how well it would otherwise match.
+    """
     query_embedding = model.encode(
         [f"query: {question}"]
     ).tolist()
@@ -71,6 +77,7 @@ def retrieve(question, collection, model):
     results = collection.query(
         query_embeddings=query_embedding,
         n_results=TOP_K,
+        where={"organization_id": organization_id},
         include=["documents", "metadatas", "distances"],
     )
 
@@ -101,7 +108,7 @@ def filter_relevant_results(results, max_distance=0.8):
 def build_context(chunks_with_meta):
     parts = []
 
-    for chunk, meta in chunks_with_meta:
+    for chunk, meta, *_ in chunks_with_meta:
         parts.append(
             f"[المصدر: {meta['source']}]\n{chunk}"
         )
@@ -158,10 +165,12 @@ def main():
         print("ERROR: LLM_API_KEY not set. Add it to .env.")
         return
 
-    if len(sys.argv) > 1:
-        question = " ".join(sys.argv[1:])
+    if len(sys.argv) > 2:
+        organization_id = int(sys.argv[1])
+        question = " ".join(sys.argv[2:])
     else:
-        question = input("اكتب سؤالك: ")
+        print("Usage: python query.py <organization_id> <question>")
+        return
 
     print("Loading embedding model...")
     model = SentenceTransformer(EMBEDDING_MODEL)
@@ -179,6 +188,7 @@ def main():
         question,
         collection,
         model,
+        organization_id,
     )
 
     context = build_context(results)
@@ -206,7 +216,7 @@ def main():
         "\nRetrieved from:",
         ", ".join(
             sorted(
-                {m["source"] for _, m in results}
+                {m["source"] for _, m, *_ in results}
             )
         ),
     )

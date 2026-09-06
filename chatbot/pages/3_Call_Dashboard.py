@@ -1,14 +1,39 @@
 """
-"First Call Resolutions" report (Phase: Data & Reporting from the PDF).
-Reads calls.db and summarizes outcomes -- FCR rate, call completion rate,
-average handle time, and the full call log.
+"First Call Resolutions" report for outbound calls, ported into the same
+app/port as the chatbot. Reads voice-assistant/calls.db and summarizes
+outcomes -- FCR rate, call completion rate, average handle time, and the
+full call log -- filtered to the logged-in user's organization only.
 """
 
-import streamlit as st
+import os
+import sys
+import importlib.util
 
-from db import get_all_calls
-from crm import lookup_customer
-from make_call import place_call
+import streamlit as st
+from dotenv import load_dotenv
+
+from auth_ui import require_login, render_logout_sidebar
+
+VOICE_ASSISTANT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "voice-assistant"))
+load_dotenv(os.path.join(VOICE_ASSISTANT_DIR, ".env"))
+sys.path.append(VOICE_ASSISTANT_DIR)
+
+from make_call import place_call  # noqa: E402
+from crm import lookup_customer  # noqa: E402
+
+
+def _load_module(name, path):
+    """voice-assistant has its own db.py (calls.db), different from the
+    chatbot's own db.py (logs.db) -- load it by explicit path so a plain
+    `import db` can't accidentally resolve to the wrong one."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+calls_db = _load_module("calls_db", os.path.join(VOICE_ASSISTANT_DIR, "db.py"))
+calls_db.init_db()
 
 st.set_page_config(page_title="تقرير المتابعة", page_icon="📊", layout="centered")
 
@@ -53,15 +78,26 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+user = require_login(allowed_roles=["admin", "agent"])
+render_logout_sidebar(user)
+
 st.markdown(
     '<div class="report-hero"><h1>📊 تقرير حل المشكلات من أول مكالمة (FCR)</h1></div>',
     unsafe_allow_html=True,
 )
 
-calls = get_all_calls()
+all_calls = calls_db.get_all_calls()
+
+# Scope to this organization only -- a call's org is looked up via the CRM
+# record for the number it was made to, since calls.db itself doesn't store
+# organization_id directly.
+calls = [
+    c for c in all_calls
+    if (lookup_customer(c["to_number"]) or {}).get("organization_id") == user["organization_id"]
+]
 
 if not calls:
-    st.info("لا توجد مكالمات مسجلة بعد. جرب بدء مكالمة من الصفحة الرئيسية أولًا.")
+    st.info("لا توجد مكالمات مسجلة بعد لهذه المؤسسة. جرب بدء مكالمة من صفحة نظام المتابعة الآلي.")
     st.stop()
 
 total = len(calls)

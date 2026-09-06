@@ -6,10 +6,11 @@ duration (logged when the /event webhook reports the call completed) can
 both land on the same row even though they arrive at different times.
 """
 
+import os
 import sqlite3
 from datetime import datetime, timezone
 
-DB_PATH = "calls.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calls.db")
 
 
 def init_db():
